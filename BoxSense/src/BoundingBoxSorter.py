@@ -1,71 +1,78 @@
-# Built-in
-import math
-import logging
-
-# Third Party
 import numpy as np
+import cv2
+
+from monodepth2 import monodepth2
 
 
 class BoundingBoxSorter:
-    @staticmethod
-    def calculateCenter(box: tuple) -> tuple:
-        """Calculates the center coordinates of a bounding box.
-
-        Args:
-            box (tuple): Bounding box coordinates (x_min, y_min, x_max, y_max).
-
-        Returns:
-            tuple: Center coordinates (center_x, center_y).
-        """
-        xMin, yMin, xMax, yMax = box
-        centerX = (xMin + xMax) / 2
-        centerY = (yMin + yMax) / 2
-        return centerX, centerY
+    depthdepthModel = monodepth2()
 
     @staticmethod
-    def calculateDistance(point1: tuple, point2: tuple) -> float:
-        """Calculates the Euclidean distance between two points.
-
-        Args:
-            point1 (tuple): First point coordinates (x1, y1).
-            point2 (tuple): Second point coordinates (x2, y2).
-
-        Returns:
-            float: Euclidean distance.
-        """
-        x1, y1 = point1
-        x2, y2 = point2
-        return math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
-
-    @staticmethod
-    def sortBoundedItems(image: np.ndarray, boundingBoxes: list) -> list:
-        """Sorts bounded items based on their distance from the image center.
+    def sortBoundedItemsByDepth(image: np.ndarray, detections: list) -> list:
+        """Sorts bounded items by their estimated depth from the camera.
 
         Args:
             image (np.ndarray): Image array (HxWxC).
-            boundingBoxes (list): List of bounding boxes [(x_min, y_min, x_max, y_max)].
+            detections (list): List of detections [(x_min, y_min, x_max, y_max, conf, _)].
 
         Returns:
             list: Sorted list of bounding boxes.
         """
-        imageCenter = (image.shape[1] / 2, image.shape[0] / 2)
         sortedItems = sorted(
-            boundingBoxes,
-            key=lambda box: BoundingBoxSorter.calculateDistance(
-                imageCenter, BoundingBoxSorter.calculateCenter(box)
-            ),
+            detections, key=lambda box: BoundingBoxSorter.calculateDepth(image, box)
         )
         return sortedItems
 
+    @staticmethod
+    def calculateDepth(image: np.ndarray, box: tuple) -> float:
+        x_min, y_min, x_max, y_max, conf, _ = box
 
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    image = np.zeros((800, 800, 3), dtype=np.uint8)  # Example image
-    boundingBoxes = [
-        (100, 100, 200, 200),
-        (300, 300, 400, 400),
-        (600, 600, 700, 700),
-    ]  # Example bounding boxes
+        input_image = image[y_min:y_max, x_min:x_max]
 
-    sortedBoundedItems = BoundingBoxSorter.sortBoundedItems(image, boundingBoxes)
-    logging.info("Sorted Bounded Items: %s", sortedBoundedItems)
+        depth = BoundingBoxSorter.depthModel.eval(input_image)
+
+        average_depth = depth.mean()
+
+        return average_depth
+
+    @staticmethod
+    def displaySortedItems(image: np.ndarray, sortedDetections: list) -> None:
+        """Displays sorted bounding box items on the image with order numbers.
+
+        Args:
+            image (np.ndarray): Image array (HxWxC).
+            sortedDetections (list): List of sorted detections [(x_min, y_min, x_max, y_max, conf, _)].
+        """
+        imageWithBoxes = image.copy()
+        for idx, box in enumerate(sortedDetections, start=1):
+            xMin, yMin, xMax, yMax, conf, _ = box
+            boxWidth = xMax - xMin
+            boxHeight = yMax - yMin
+
+            cv2.rectangle(
+                imageWithBoxes,
+                (int(xMin), int(yMin)),
+                (int(xMax), int(yMax)),
+                (0, 255, 0),
+                2,
+            )
+
+            text_size = cv2.getTextSize(str(idx), cv2.FONT_HERSHEY_SIMPLEX, 1, 2)[0]
+            text_x = int(xMin + (boxWidth - text_size[0]) / 2)
+            text_y = int(yMin + (boxHeight + text_size[1]) / 2)
+
+            cv2.putText(
+                imageWithBoxes,
+                str(idx),
+                (text_x, text_y),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1,
+                (0, 0, 255),
+                2,
+            )
+
+        imageWithBoxesRGB = cv2.cvtColor(imageWithBoxes, cv2.COLOR_BGR2RGB)
+
+        cv2.imshow("Sorted Bounded Items", imageWithBoxesRGB)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()

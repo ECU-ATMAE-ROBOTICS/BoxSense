@@ -4,8 +4,6 @@ import logging
 # Third Party
 import torch
 import cv2
-from torchvision import transforms
-from PIL import Image
 import numpy as np
 
 # Internal
@@ -19,16 +17,17 @@ class BoxSensor:
         Args:
             modelPath (str): Path to the model checkpoint file.
         """
-        self.model = torch.load(modelPath)
-        self.model.eval()
-        self.transform = transforms.Compose(
-            [
-                transforms.ToTensor(),
-                transforms.Normalize(
-                    mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
-                ),
-            ]
+        self.model = torch.hub.load(
+            "ultralytics/yolov5",
+            "custom",
+            path=modelPath,
+            verbose=False,
         )
+
+        self.model.eval()
+
+        self.model.conf = 0.75  # NMS confidence threshold
+
         self.logger = logging.getLogger(__name__)
 
     def detectBoxes(self, image: np.ndarray) -> list:
@@ -43,14 +42,10 @@ class BoxSensor:
         if image.dtype != np.uint8:
             image = (image * 255).astype(np.uint8)
 
-        imagePIL = Image.fromarray(image)
-        inputImage = self.transform(imagePIL).unsqueeze(0)
-
         with torch.no_grad():
-            predictions = self.model(inputImage)
+            predictions = self.model(image)
 
-        boxes = predictions[0]["boxes"].tolist()
-        return boxes
+        return predictions.xyxy[0].cpu().numpy()
 
     def visualizeBoxes(self, image: np.ndarray, boxes: list) -> None:
         """Visualizes detected boxes on the input image.
@@ -64,7 +59,7 @@ class BoxSensor:
 
         imageCV2 = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
         for box in boxes:
-            xMin, yMin, xMax, yMax = box
+            xMin, yMin, xMax, yMax, conf, _ = box
             cv2.rectangle(
                 imageCV2,
                 (int(xMin), int(yMin)),
@@ -80,10 +75,10 @@ class BoxSensor:
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    detector = BoxSensor("src/model/box-model.pt")
+    detector = BoxSensor("BoxSense/src/model/box-model.pt")
     sorter = BoundingBoxSorter()
 
-    imagePath = "src/data/boxes-on-pallets.jpg"
+    imagePath = "BoxSense/src/data/boxes-on-pallets.jpeg"
     imageArray = cv2.cvtColor(cv2.imread(imagePath), cv2.COLOR_BGR2RGB)
 
     detectedBoxes = detector.detectBoxes(imageArray)
@@ -91,5 +86,9 @@ if __name__ == "__main__":
 
     detector.visualizeBoxes(imageArray, detectedBoxes)
 
-    sortedBoundedItems = BoundingBoxSorter.sortBoundedItems(imageArray, detectedBoxes)
+    sortedBoundedItems = BoundingBoxSorter.sortBoundedItemsByDepth(
+        imageArray, detectedBoxes
+    )
     logging.info("Sorted Bounded Items: %s", sortedBoundedItems)
+
+    BoundingBoxSorter.displaySortedItems(imageArray, sortedBoundedItems)
